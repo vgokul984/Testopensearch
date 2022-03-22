@@ -1,0 +1,86 @@
+#This Lambda function reads the Kinesis Firehose records as Input, decrypt the log records using KMS key, unzip the records and then categories the event type into S3 folder structure. 
+from __future__ import print_function
+import json
+import boto3
+import base64
+import zlib
+import aws_encryption_sdk
+from aws_encryption_sdk import CommitmentPolicy
+from aws_encryption_sdk.internal.crypto import WrappingKey
+from aws_encryption_sdk.key_providers.raw import RawMasterKeyProvider
+from aws_encryption_sdk.identifiers import WrappingAlgorithm, EncryptionKeyType
+import datetime
+
+REGION_NAME = 'us-east-1'
+RESOURCE_ID = 'cluster-BVWWOWDEDW2IZ7LSYB5BAWL2OY'
+BUCKET_NAME = 'dastestbuckete'
+
+enc_client = aws_encryption_sdk.EncryptionSDKClient(commitment_policy=CommitmentPolicy.REQUIRE_ENCRYPT_ALLOW_DECRYPT)
+kms = boto3.client('kms', region_name=REGION_NAME)
+s3 = boto3.client('s3')
+todays_date = datetime.datetime.now()
+
+class MyRawMasterKeyProvider(RawMasterKeyProvider):
+    provider_id = "BC"
+    def __new__(cls, *args, **kwargs):
+        obj = super(RawMasterKeyProvider, cls).__new__(cls)
+        return obj
+    def __init__(self, plain_key):
+        RawMasterKeyProvider.__init__(self)
+        self.wrapping_key = WrappingKey(wrapping_algorithm=WrappingAlgorithm.AES_256_GCM_IV12_TAG16_NO_PADDING,
+                                        wrapping_key=plain_key, wrapping_key_type=EncryptionKeyType.SYMMETRIC)
+    def _get_raw_key(self, key_id):
+        return self.wrapping_key
+
+def decrypt_payload(payload, data_key):
+    my_key_provider = MyRawMasterKeyProvider(data_key)
+    my_key_provider.add_master_key("DataKey")
+    #Decrypt the records using the master key.
+    decrypted_plaintext, header = enc_client.decrypt(
+        source=payload,
+        materials_manager=aws_encryption_sdk.materials_managers.default.DefaultCryptoMaterialsManager(master_key_provider=my_key_provider))
+    return decrypted_plaintext
+
+def decrypt_decompress(payload, key):
+    decrypted = decrypt_payload(payload, key)
+    #Decompress the records using zlib library.
+    decrypted = zlib.decompress(decrypted, zlib.MAX_WBITS + 16)
+    return decrypted
+
+def lambda_handler(event, context):
+    output = []
+
+    for dasRecord in event['records']:
+        recID = dasRecord['recordId']
+        data = base64.b64decode(dasRecord['data'])
+        # Do processing here
+        record_data = json.loads(data)
+		# Decode and decrypt the payload
+        payload_decoded = base64.b64decode(record_data['databaseActivityEvents'])
+        data_key_decoded = base64.b64decode(record_data['key'])
+        data_key_decrypt_result = kms.decrypt(CiphertextBlob=data_key_decoded, EncryptionContext={'aws:rds:dbc-id': RESOURCE_ID})
+        plaintext = decrypt_decompress(payload_decoded, data_key_decrypt_result['Plaintext'])
+        print(plaintext)
+        events = json.loads(plaintext)
+        for dbEvent in events['databaseActivityEventList']:
+            if dbEvent['type'] == "heartbeat" or dbEvent['dbUserName'] == "das_audit":# and not (dbEvent.get('command') is None):
+                events['databaseActivityEventList'].remove(dbEvent) # Removed events from events['databaseActivityEventList']
+        if len(events['databaseActivityEventList']) > 0:
+            output_record = {
+                'recordId': dasRecord['recordId'], # + ''.join(random.choices(string.ascii_lowercase, k=10)),
+                'result': 'Ok',
+                    #'data': base64.b64encode(plaintext).encode('utf-8'))
+                'data': base64.b64encode(json.dumps(events).encode('utf-8') + b'\n').decode("utf-8")
+                
+                }
+        else:
+            output_record = {
+                'recordId': dasRecord['recordId'], # + ''.join(random.choices(string.ascii_lowercase, k=10)),
+                'result': 'Dropped',
+                    #'data': base64.b64encode(plaintext).encode('utf-8'))
+                'data': base64.b64encode(b'this is a dropped event \n').decode("utf-8")
+                }
+        output.append(output_record)
+    print(output)
+    return {'records': output}
+      
