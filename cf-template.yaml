@@ -1,0 +1,271 @@
+AWSTemplateFormatVersion: 2010-09-09
+#Region Parameters
+Parameters:
+  ApplicationGroup:
+    Type: String
+    Default: PTCReporting
+  CostCenter:
+    Type: String
+    Default: 3917
+  FundingSource:
+    Type: String
+    Default: CapEx
+  ITDR:
+    Type: String
+    Default: 132145
+  WBSE:
+    Type: String
+    Default: C.IT.100313.0001
+  Environment:
+    Description: Lowercase environment for resource naming conventions
+    Type: String
+    AllowedValues:
+      - dev
+      - test
+      - stage
+      - prod
+  Stage:
+    Description: Stage used for resource naming conventions
+    Type: String
+    AllowedValues:
+      - D
+      - T
+      - S
+      - P
+  StageLower:
+    Description: Stage used for resource naming conventions
+    Type: String
+    AllowedValues:
+      - d
+      - t
+      - s
+      - p
+  Role:
+    Type: String
+  SecurityGroupIds:
+    Description: Security groups used by Lambda resources
+    Type: CommaDelimitedList
+  SubnetIds:
+    Description: Subnets used by Lambda resources
+    Type: CommaDelimitedList
+  SecurityGroupIdsGlue:
+    Description: Security groups used by Glue resources
+    Type: CommaDelimitedList
+  SubnetIdGlue:
+    Description: Subnets used by Glue resources
+    Type: String
+  S3BucketName:
+    Type: String
+    Default: ptc-
+  TablePath:
+    Type: String
+    Default: edl-track-processed/sor_ptc
+  S3ConfigPrefix:
+    Description: upload folder for configurations in S3 Bucket
+    Type: String
+  S3CodePrefix:
+    Description: upload folder for code in S3 Bucket
+    Type: String
+  Landscape:
+    Description: Environment used for tagging resources
+    Type: String
+    AllowedValues:
+      - DEV
+      - TEST
+      - STAGE
+      - PROD
+
+#End Region Parameters
+
+#Region Mappings
+Mappings:
+  mRegion:
+    us-east-1:
+      AZEast1C: "us-east-1c"
+#End Region Mappings
+
+#Region Resources
+Resources:
+  #Region Glue
+
+  PTCReportingGlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Command:
+        Name: pythonshell
+        ScriptLocation: !Sub 's3://${S3BucketName}/${S3CodePrefix}/${ApplicationGroup}/ptc_logging.py'
+        PythonVersion: 3
+      Connections:
+        Connections:
+          - !Sub '${Environment}.SDHM_ETDS_JDBC_Connection'
+#          - !Ref PTCReportingGlueConnection
+      Description: Initial Load job to get data from Logs into S3
+      DefaultArguments:
+        "--AWS_REGION": !Ref AWS::Region
+        "--config_bucket": !Ref S3BucketName
+        "--config_path": !Sub 's3://${S3BucketName}/ptc-reporting/AWS_Environment_Configuration/ptc_reporting_config.json'
+      GlueVersion: 1.0
+      Name: !Sub '${Environment}.PTCReporting-Initialload'
+      Role: !Ref Role
+      Tags:
+        ApplicationGroup: !Ref ApplicationGroup
+        CostCenter: !Ref CostCenter
+        FundingSource: !Ref FundingSource
+        Landscape: !Ref Landscape
+        ITDR: !Ref ITDR
+
+  #Classifier
+  PTCReportingClassifier:
+    Type: AWS::Glue::Classifier
+    Properties:
+      CsvClassifier:
+        ContainsHeader: PRESENT
+        Delimiter: "|"
+        Name: PTC-Classifier
+
+  #Database
+  PTCReportingDBS3:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub 'ptcrep-s3-db-${StageLower}'
+
+  #Clawler
+  PTCReportingCrawlerS3:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Classifiers:
+        - !Ref PTCReportingClassifier
+      DatabaseName: !Ref PTCReportingDBS3
+      Description: Crawler to get data from S3 into Glue Data Catalog
+      Name: !Sub PTCReporting-Crawler-${StageLower}
+      Role: !Ref Role
+      Schedule:
+        ScheduleExpression: "cron(30 6 * * ? *)"
+      SchemaChangePolicy:
+        DeleteBehavior: "LOG"
+      RecrawlPolicy:
+        RecrawlBehavior: CRAWL_NEW_FOLDERS_ONLY
+      Targets:
+        S3Targets:
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/bnr'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/bha'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/css'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/cfg'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/flt'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/fds'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/gps'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/kdp'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/kpr'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/loc'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/lid'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/mdr'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/prm'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/syn'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/sys'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/tgt'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/tgt_dtl'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/tdv'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/trk'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/the'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/trn'
+          - Path: !Sub 's3://${S3BucketName}/edl-track-processed/sor_ptc/trn_ref'
+  
+  #Initial Load Trigger
+  PTCReportingS3Trigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Actions:
+        - JobName: !Sub '${Environment}.PTCReporting-Initialload'
+      Description: "This trigger will kick off the PTCReporting-Initialload Glue Job"
+      Name: !Sub '${Environment}.PTCReporting-TriggerS3'
+      Schedule: "cron(0 3 * * ? *)"
+      StartOnCreation: true
+      Type: SCHEDULED
+  
+
+  #Connection To Postgres
+  PTCReportingGlueConnection:
+    Type: AWS::Glue::Connection
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      ConnectionInput:
+        ConnectionProperties:
+          "JDBC_CONNECTION_URL": !Sub 'jdbc:postgresql://{{resolve:secretsmanager:/amtrak/${ApplicationGroup}/${Landscape}/db/rds/aurora-postgres/odh:SecretString:host}}:{{resolve:secretsmanager:/amtrak/${ApplicationGroup}/${Landscape}/db/rds/aurora-postgres/odh:SecretString:port}}/{{resolve:secretsmanager:/amtrak/${ApplicationGroup}/${Landscape}/db/rds/aurora-postgres/odh:SecretString:dbname}}'
+          "JDBC_ENFORCE_SSL": true
+          "USERNAME": !Sub '{{resolve:secretsmanager:/amtrak/${ApplicationGroup}/${Landscape}/db/rds/aurora-postgres/odh:SecretString:username}}'
+          "PASSWORD": !Sub '{{resolve:secretsmanager:/amtrak/${ApplicationGroup}/${Landscape}/db/rds/aurora-postgres/odh:SecretString:password}}'
+        ConnectionType: JDBC
+        Name: !Sub '${Environment}.${ApplicationGroup}_ptcreporting_conn'
+        PhysicalConnectionRequirements:
+          AvailabilityZone: !FindInMap
+            - mRegion
+            - !Ref 'AWS::Region'
+            - AZEast1C
+          SecurityGroupIdList: !Ref SecurityGroupIdsGlue
+          SubnetId: !Ref SubnetIdGlue
+
+  #Database
+  PTCReportingPostgres:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub 'ptcrep-postgres-db-${StageLower}'
+        LocationUri: !Sub 's3://${S3BucketName}/PTCReporting/Database/'
+
+  #Clawler
+  PTCReportingCrawlerPostgres:
+    Type: AWS::Glue::Crawler
+    Properties:
+      DatabaseName: !Ref PTCReportingPostgres
+      Description: Crawler to get tables from Postgres into Glue Data Catalog
+      Name: !Sub PTCReporting-Crawler-Postgres-${StageLower}
+      Role: !Ref Role
+      Schedule:
+        ScheduleExpression: "cron(30 8 * * ? *)"
+      Targets:
+        JdbcTargets:
+          - ConnectionName: !Ref PTCReportingGlueConnection
+            Path: !Sub 'odh${Environment}/ptc_op'
+
+  PTCReportingGlueMappingJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${S3BucketName}/${S3CodePrefix}/${ApplicationGroup}/ptc_loaddata_postgres.py'
+        PythonVersion: 3
+      Connections:
+        Connections:
+          - !Ref PTCReportingGlueConnection
+#          - !Sub '${Environment}.SDHM_ETDS_JDBC_Connection'
+      Description: Initial Load job to get data from Logs into Postgres
+      DefaultArguments:
+        "--AWS_REGION": !Ref AWS::Region
+        "--config_bucket": !Ref S3BucketName
+        "--config_path": !Sub 's3://${S3BucketName}/ptc-reporting/AWS_Environment_Configuration/ptc_reporting_config.json'
+        "--job-bookmark-option": "job-bookmark-enable"
+      GlueVersion: 1.0
+      Name: !Sub '${Environment}.PTCReporting_load-topostgres_spark'
+      Role: !Ref Role
+      Tags:
+        ApplicationGroup: !Ref ApplicationGroup
+        CostCenter: !Ref CostCenter
+        FundingSource: !Ref FundingSource
+        Landscape: !Ref Landscape
+        ITDR: !Ref ITDR
+
+  #Postgres Trigger
+  PTCReportingPostgresTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Actions:
+        - JobName: !Sub '${Environment}.PTCReporting_load-topostgres_spark'
+      Description: "This trigger will kick off the PTCReporting_load-topostgres_spark Glue Job"
+      Name: !Sub '${Environment}.PTCReporting-TriggerPostgres'
+      Schedule: "cron(30 7 * * ? *)"
+      StartOnCreation: true
+      Type: SCHEDULED
+#End Region Resources
