@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This stack creates infra resources for KENSTAR Application
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment Name (DEV/QA/BETA/STG/PREPROD/PROD/DR)
+    AllowedValues: ['DEV', 'QA', 'BETA', 'STG','PREPROD','PROD', 'DR']
+  Platform:
+    Type: String
+    Default: 'KENSTAR'
+    Description: Platform Name
+  Environment2:
+    Type: String
+    Default: 'QA02'
+    Description: Environment Name
+  Owner:
+    Type: String
+    Default: 'KENSTAR'
+    Description: Owner Name
+  AppID:
+    Type: String
+    Default: '403A115B-3E7F-4163-BE88-D67982C6B566'
+    Description: AppID
+  BU:
+    Type: String
+    Default: 'DJI'
+    Description: BU Name
+  SupportGroup:
+    Type: String
+    Default: 'IM-SPDJI-Index infrastructure'
+    Description: SupportGroup Name
+Description: "AWS Glue Job Test"
+Resources:
+  MyJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "glue.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        -
+          PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action: "*"
+                Resource: "*"
+ 
+  MyJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Command:
+        Name: glueetl
+        ScriptLocation: "s3://qa-kenstar-01/ETL/"
+      NumberOfWorkers: 50
+      WorkerType: G.2X
+      DefaultArguments:
+        "--job-bookmark-option": "job-bookmark-enable"
+      ExecutionProperty:
+        MaxConcurrentRuns: 2
+      MaxRetries: 0
+      Name: cf-job1
+      Role: !Ref MyJobRole
