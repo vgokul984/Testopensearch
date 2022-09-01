@@ -1,6 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: This stack creates infra resources for KENSTAR Application
+Description: This stack creates infra resources for AWS Glue Job Application
 Parameters:
+  S3Bucketname:
+    Description: Name of the S3 bucket 
+    Type: String
+    Default: qa-kenstar-01
   Environment:
     Type: String
     Description: Environment Name (DEV/QA/BETA/STG/PREPROD/PROD/DR)
@@ -28,8 +32,7 @@ Parameters:
   SupportGroup:
     Type: String
     Default: 'IM-SPDJI-Index infrastructure'
-    Description: SupportGroup Name
-Description: "AWS Glue Job Test"
+    Description: SupportGroup Name  
 Resources:
   MyJobRole:
     Type: AWS::IAM::Role
@@ -61,13 +64,24 @@ Resources:
     Properties:
       Command:
         Name: glueetl
-        ScriptLocation: "s3://qa-kenstar-01/ETL/"
+        PythonVersion: 3
+        ScriptLocation: !Sub 's3://${S3Bucketname}/ETL/etl-global.py'
+      GlueVersion: '3.0'    
       NumberOfWorkers: 50
       WorkerType: G.2X
+      Timeout: 2880
       DefaultArguments:
-        "--job-bookmark-option": "job-bookmark-enable"
+        --job-bookmark-option: job-bookmark-enable
+        --enable-metrics: 'true'
+        --enable-spark-ui: 'true'
+        --enable-continuous-cloudwatch-log: 'true'
+        --job-language: 'python'
+        --tgt_s3_bkt: 's3://qa-kenstar-01/ETL/'
+        --spark-event-logs-path: 's3://qa-kenstar-01/ETL/'
+        --TempDir: 's3://qa-kenstar-01/ETL/'
+        --enable-glue-datacatalog: 'true'
       ExecutionProperty:
-        MaxConcurrentRuns: 2
-      MaxRetries: 0
+        MaxConcurrentRuns: 1
+      MaxRetries: 1
       Name: cf-job1
       Role: !Ref MyJobRole
